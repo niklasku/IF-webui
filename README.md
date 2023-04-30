@@ -24,6 +24,6 @@ All generated images are saved to the images/ folder and all upscaled images to 
 
 ## Licenses
 
-DeepFloyd: https://github.com/deep-floyd/IF/blob/develop/LICENSE
-DeepFloyd models: https://github.com/deep-floyd/IF/blob/develop/LICENSE-MODEL
-WebUI code (webui.py): CC0 (https://creativecommons.org/publicdomain/zero/1.0/)
+- DeepFloyd: https://github.com/deep-floyd/IF/blob/develop/LICENSE
+- DeepFloyd models: https://github.com/deep-floyd/IF/blob/develop/LICENSE-MODEL
+- WebUI (webui.py): https://creativecommons.org/publicdomain/zero/1.0/
