@@ -129,13 +129,14 @@ def generate_images(prompt, batch_count, seed, progress=gr.Progress()):
     filename = "images/" + str(int(time.time()))
     images = result['II']
     for i in range(len(images)):
+        seed_str = str(seed + i)
         metadata = PngInfo()
         metadata.add_text("prompt", prompt)
-        metadata.add_text("seed", seed + i)
+        metadata.add_text("seed", seed_str)
         images[i].save(filename + "_" + str(i) + ".png", pnginfo=metadata)
 
         # Store prompt so it works from stash.
-        images[i].info.update({"prompt": prompt, "seed": seed+i})
+        images[i].info.update({"prompt": prompt, "seed": seed_str})
 
     global generated_images
     generated_images = images
