@@ -1,3 +1,9 @@
+# IF WebUI
+
+A simple WebUI for using IF by DeepFloyd (https://github.com/deep-floyd/IF).
+
+![Screenshot](/screenshot.png)
+
 ## Installing
 
 **NOTE:** You need to have 24GB VRAM, so works only on RTX 3090/4090 currently.
