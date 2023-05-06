@@ -24,16 +24,19 @@ def default_settings():
             "height": 1.0
         },
         "disable_watermark": True,
-        "generation_stages": 1,
-        "upscale_stages": 2,
+        "generation_cascades": 1,
+        "upscale_cascades": 2,
         "if_I": {
             "model": "IF-I-L-v1.0",
             "guidance_scale": 7.0,
+            "positive_mixer": 0.25,
             "sample_timestep_respacing": "super40"
         },
         "if_II": {
             "model": "IF-II-M-v1.0",
             "guidance_scale": 6.0,
+            "aug_level": 0.25,
+            "positive_mixer": 0.25,
             "sample_timestep_respacing": "super40"
         },
         "if_III": {
@@ -136,7 +139,7 @@ def set_generate_mode(progress):
 
     progress(0, desc="Unloading unused stages")
 
-    stages = settings["generation_stages"]
+    stages = settings["generation_cascades"]
 
     if if_III is not None and stages < 3:
         unload_stages([if_III])
@@ -164,7 +167,7 @@ def set_upscale_mode(progress):
     else:
         unloaded = False
 
-    if load_stages([2,3] if settings["upscale_stages"] > 1 else [3], progress) or unloaded:
+    if load_stages([2,3] if settings["upscale_cascades"] > 1 else [3], progress) or unloaded:
         torch.cuda.empty_cache()
 
     progress(1.0, desc="Ready to upscale")
@@ -183,7 +186,7 @@ def get_model(stage):
     else:
         return settings['if_III']['model']
 
-def generate_images(prompt, batch_count, seed, is_random_seed, progress=gr.Progress(track_tqdm=True)):
+def generate_images(prompt, negative_prompt, style_prompt, batch_count, seed, is_random_seed, progress=gr.Progress(track_tqdm=True)):
     set_generate_mode(progress)
 
     if is_random_seed:
@@ -191,8 +194,8 @@ def generate_images(prompt, batch_count, seed, is_random_seed, progress=gr.Progr
 
     progress(0.0, desc="Generating images")
 
-    enable_stage_II = settings["generation_stages"] > 1
-    enable_stage_III = settings["generation_stages"] > 2
+    enable_stage_II = settings["generation_cascades"] > 1
+    enable_stage_III = settings["generation_cascades"] > 2
 
     result = dream(
         t5=t5,
@@ -200,6 +203,8 @@ def generate_images(prompt, batch_count, seed, is_random_seed, progress=gr.Progr
         if_II=if_II if enable_stage_II else None,
         if_III=if_III if enable_stage_III else None,
         prompt=[prompt]*batch_count,
+        style_prompt=[style_prompt]*batch_count,
+        negative_prompt=[negative_prompt]*batch_count,
         seed=int(seed),
         aspect_ratio=get_aspect_ratio(),
         if_I_kwargs=get_settings("if_I"),
@@ -223,18 +228,20 @@ def generate_images(prompt, batch_count, seed, is_random_seed, progress=gr.Progr
         seed_str = str(int(seed + i))
         metadata = PngInfo()
         metadata.add_text("prompt", prompt)
+        metadata.add_text("negative_prompt", negative_prompt)
+        metadata.add_text("style_prompt", style_prompt)
         metadata.add_text("seed", seed_str)
         images[i].save(filename + "_" + str(i) + ".png", pnginfo=metadata)
 
         # Store prompt so it works from stash.
-        images[i].info.update({"prompt": prompt, "seed": seed_str})
+        images[i].info.update({"prompt": prompt, "negative_prompt": negative_prompt, "style_prompt": style_prompt, "seed": seed_str})
 
     global generated_images
     generated_images = images
 
     return images, seed
 
-def upscale_image(image, prompt, seed, progress=gr.Progress(track_tqdm=True)):
+def upscale_image(image, prompt, negative_prompt, seed, progress=gr.Progress(track_tqdm=True)):
     set_upscale_mode(progress)
 
     progress(0.0, desc="Upscaling image")
@@ -243,13 +250,17 @@ def upscale_image(image, prompt, seed, progress=gr.Progress(track_tqdm=True)):
         prompt = image.info['prompt']
         print("Using prompt from metadata: " + prompt)
 
+    if 'negative_prompt' in image.info:
+        negative_prompt = image.info['negative_prompt']
+        print("Using negative prompt from metadata: " + negative_prompt)
+
     if 'seed' in image.info:
         seed = int(float(image.info['seed']))
         print("Using seed from metadata: " + str(seed))
     else:
         seed = seed = random.randint(0, 9999)
 
-    if settings['upscale_stages'] > 1:
+    if settings['upscale_cascades'] > 1:
         if image.width > 64:
             scale = min(image.width//64, image.height//64)
             image = image.resize((image.width//scale, image.height//scale), PIL.Image.NEAREST)
@@ -259,6 +270,7 @@ def upscale_image(image, prompt, seed, progress=gr.Progress(track_tqdm=True)):
             seed=seed,
             if_III=if_II,
             prompt=[prompt],
+            negative_prompt=[negative_prompt],
             support_pil_img=image,
             img_scale=4.,
             img_size=image.width,
@@ -275,6 +287,7 @@ def upscale_image(image, prompt, seed, progress=gr.Progress(track_tqdm=True)):
         seed=seed,
         if_III=if_III,
         prompt=[prompt],
+        negative_prompt=[negative_prompt],
         support_pil_img=image,
         img_scale=4.,
         img_size=image.width,
@@ -289,10 +302,10 @@ def upscale_image(image, prompt, seed, progress=gr.Progress(track_tqdm=True)):
     return high_res['III']
 
 
-def upscale_all(prompt, seed, progress=gr.Progress(track_tqdm=True)):
+def upscale_all(prompt, negative_prompt, seed, progress=gr.Progress(track_tqdm=True)):
     results = []
     for i in range(len(stashed_images)):
-        result = upscale_image(stashed_images[i], prompt, seed, progress)
+        result = upscale_image(stashed_images[i], prompt, negative_prompt, seed, progress)
         results.append(result[0])
     return results
 
@@ -365,6 +378,8 @@ def launch_ui():
             gr.Button("Reset").style(full_width=False).click(reset_settings, outputs=setting_items)
 
         prompt = gr.Textbox(label="Prompt", placeholder="Type your prompt here...")
+        negative_prompt = gr.Textbox(label="Negative Prompt", placeholder="Type your negative prompt here...")
+        style_prompt = gr.Textbox(label="Style Prompt", placeholder="Type your style prompt here...")
 
         with gr.Row():
             with gr.Column():
@@ -377,15 +392,15 @@ def launch_ui():
 
                 gallery = gr.Gallery(show_label=False).style(columns=[4], rows=[1], object_fit="scale-down", preview=True)
 
-                prompt.submit(generate_images, inputs=[prompt, batch_count, seed, random_seed], outputs=[gallery, seed])
-                btn_generate.click(generate_images, inputs=[prompt, batch_count, seed, random_seed], outputs=[gallery, seed])
+                prompt.submit(generate_images, inputs=[prompt, negative_prompt, style_prompt, batch_count, seed, random_seed], outputs=[gallery, seed])
+                btn_generate.click(generate_images, inputs=[prompt, negative_prompt, style_prompt, batch_count, seed, random_seed], outputs=[gallery, seed])
 
             with gr.Column():
                 btn_upscale = gr.Button("Upscale").style(full_width=False)
                 upscale_input = gr.Image(label="Upscale image", type="pil")
                 upscaled = gr.Gallery(show_label=False)
                 #upscaled = gr.Image(show_label=False, type="pil", interactive=False).style(width=1024, height=1024)
-                btn_upscale.click(upscale_image, inputs=[upscale_input, prompt, seed], outputs=[upscaled])
+                btn_upscale.click(upscale_image, inputs=[upscale_input, prompt, negative_prompt, seed], outputs=[upscaled])
 
             gallery.select(image_selected, outputs=[upscale_input])
 
