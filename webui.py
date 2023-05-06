@@ -20,10 +20,10 @@ def default_settings():
     return {
         "theme": "sudeepshouche/minimalist",
         "aspect_ratio": {
-            "width": 2.0,
-            "height": 3.0
+            "width": 1.0,
+            "height": 1.0
         },
-        "disable_watermark": true,
+        "disable_watermark": True,
         "generation_stages": 1,
         "upscale_stages": 2,
         "if_I": {
