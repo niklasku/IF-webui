@@ -1,6 +1,6 @@
-# IF WebUI
+# IF Web UI
 
-A simple WebUI for using IF by DeepFloyd (https://github.com/deep-floyd/IF).
+A simple web UI for using IF by DeepFloyd (https://github.com/deep-floyd/IF).
 
 ![Screenshot](/screenshot.png)
 
@@ -30,6 +30,6 @@ All generated images are saved to the images/ folder and all upscaled images to 
 
 ## Licenses
 
-- DeepFloyd: https://github.com/deep-floyd/IF/blob/develop/LICENSE
-- DeepFloyd models: https://github.com/deep-floyd/IF/blob/develop/LICENSE-MODEL
+- DeepFloyd IF: https://github.com/deep-floyd/IF/blob/develop/LICENSE
+- DeepFloyd IF models: https://github.com/deep-floyd/IF/blob/develop/LICENSE-MODEL
 - WebUI (webui.py): https://creativecommons.org/publicdomain/zero/1.0/
