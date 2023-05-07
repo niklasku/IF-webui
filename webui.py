@@ -18,26 +18,31 @@ import torch
 
 def default_settings():
     return {
-        "theme": "sudeepshouche/minimalist",
+        "general": {
+            "theme": "sudeepshouche/minimalist",
+            "disable_watermark": True,
+            "offload_folder": "offload",
+        },
         "aspect_ratio": {
             "width": 1.0,
             "height": 1.0
         },
-        "disable_watermark": True,
-        "generation_cascades": 1,
-        "upscale_cascades": 2,
+        "cascades": {
+            "generation": 2.0,
+            "upscale": 1.0,
+        },
         "if_I": {
-            "model": "IF-I-L-v1.0",
-            "guidance_scale": 7.0,
+            "model": "IF-I-XL-v1.0",
+            "guidance_scale": 4.0,
             "positive_mixer": 0.25,
-            "sample_timestep_respacing": "super40"
+            "sample_timestep_respacing": "smart100"
         },
         "if_II": {
-            "model": "IF-II-M-v1.0",
-            "guidance_scale": 6.0,
+            "model": "IF-II-L-v1.0",
+            "guidance_scale": 4.0,
             "aug_level": 0.25,
             "positive_mixer": 0.25,
-            "sample_timestep_respacing": "super40"
+            "sample_timestep_respacing": "smart50"
         },
         "if_III": {
             "model": "stable-diffusion-x4-upscaler",
@@ -86,7 +91,6 @@ def reset_settings():
     settings = default_settings()
     return get_value_list(settings)
 
-mode = ""
 device = 'cuda:0'
 if_I = None
 if_II = None
@@ -139,7 +143,7 @@ def set_generate_mode(progress):
 
     progress(0, desc="Unloading unused stages")
 
-    stages = settings["generation_cascades"]
+    stages = settings["cascades"]["generation"]
 
     if if_III is not None and stages < 3:
         unload_stages([if_III])
@@ -158,16 +162,20 @@ def set_generate_mode(progress):
 
 
 def set_upscale_mode(progress):
-    global if_I
+    global if_I, if_II
     progress(0, desc="Unloading unused stages")
+    unloaded = False
     if if_I is not None:
         unload_stages([if_I])
         if_I = None
         unloaded = True
-    else:
-        unloaded = False
 
-    if load_stages([2,3] if settings["upscale_cascades"] > 1 else [3], progress) or unloaded:
+    if if_II is not None and settings["cascades"]["upscale"] < 2:
+        unload_stages([if_II])
+        if_II = None
+        unloaded = True
+
+    if load_stages([2,3] if settings["cascades"]["upscale"] > 1 else [3], progress) or unloaded:
         torch.cuda.empty_cache()
 
     progress(1.0, desc="Ready to upscale")
@@ -194,8 +202,8 @@ def generate_images(prompt, negative_prompt, style_prompt, batch_count, seed, is
 
     progress(0.0, desc="Generating images")
 
-    enable_stage_II = settings["generation_cascades"] > 1
-    enable_stage_III = settings["generation_cascades"] > 2
+    enable_stage_II = settings["cascades"]["generation"] > 1
+    enable_stage_III = settings["cascades"]["generation"] > 2
 
     result = dream(
         t5=t5,
@@ -203,14 +211,14 @@ def generate_images(prompt, negative_prompt, style_prompt, batch_count, seed, is
         if_II=if_II if enable_stage_II else None,
         if_III=if_III if enable_stage_III else None,
         prompt=[prompt]*batch_count,
-        style_prompt=[style_prompt]*batch_count,
-        negative_prompt=[negative_prompt]*batch_count,
+        style_prompt=[style_prompt]*batch_count if style_prompt != "" else None,
+        negative_prompt=[negative_prompt]*batch_count if negative_prompt != "" else None,
         seed=int(seed),
         aspect_ratio=get_aspect_ratio(),
         if_I_kwargs=get_settings("if_I"),
         if_II_kwargs=get_settings("if_II") if enable_stage_II else None,
         if_III_kwargs=get_settings("if_III") if enable_stage_III else None,
-        disable_watermark=settings["disable_watermark"],
+        disable_watermark=settings["general"]["disable_watermark"],
     )
 
     progress(0.9, desc="Saving images")
@@ -260,11 +268,7 @@ def upscale_image(image, prompt, negative_prompt, seed, progress=gr.Progress(tra
     else:
         seed = seed = random.randint(0, 9999)
 
-    if settings['upscale_cascades'] > 1:
-        if image.width > 64:
-            scale = min(image.width//64, image.height//64)
-            image = image.resize((image.width//scale, image.height//scale), PIL.Image.NEAREST)
-
+    if settings["cascades"]["upscale"] > 1:
         middle_res = super_resolution(
             t5,
             seed=seed,
@@ -273,14 +277,11 @@ def upscale_image(image, prompt, negative_prompt, seed, progress=gr.Progress(tra
             negative_prompt=[negative_prompt],
             support_pil_img=image,
             img_scale=4.,
-            img_size=image.width,
+            img_size=min(image.width, image.height),
             if_III_kwargs=get_settings("if_III"),
-            disable_watermark=settings["disable_watermark"],
+            disable_watermark=settings["general"]["disable_watermark"],
         )
         image = middle_res['III'][0]
-    elif image.width > 256:
-        scale = min(image.width//256, image.height//256)
-        image = image.resize((image.width//scale, image.height//scale), PIL.Image.NEAREST)
 
     high_res = super_resolution(
         t5,
@@ -290,9 +291,9 @@ def upscale_image(image, prompt, negative_prompt, seed, progress=gr.Progress(tra
         negative_prompt=[negative_prompt],
         support_pil_img=image,
         img_scale=4.,
-        img_size=image.width,
+        img_size=min(image.width, image.height),
         if_III_kwargs=get_settings("if_III"),
-        disable_watermark=settings["disable_watermark"],
+        disable_watermark=settings["general"]["disable_watermark"],
     )
 
     progress(0.9, desc="Saving image")
@@ -334,7 +335,7 @@ def image_selected(evt: gr.SelectData):
 def stash_gallery_selected(evt: gr.SelectData):
     return stashed_images[evt.index]
 
-def create_dict_ui(kv_dict, items, is_col=True, section=''):
+def create_dict_ui(kv_dict, items, is_col=False, section=''):
     with gr.Column() if is_col else gr.Row():
         for k, v in kv_dict.items():
             t = type(v)
@@ -359,7 +360,7 @@ def create_dict_ui(kv_dict, items, is_col=True, section=''):
                 item = gr.Checkbox(label=label, value=v, interactive=True)
             elif v is not None:
                 #gr.Markdown(value=label)
-                with gr.Accordion(label, open=False):
+                with gr.Accordion(label, open=not is_col):
                     if t is dict:
                         create_dict_ui(v, items, not is_col, k)
 
@@ -368,7 +369,7 @@ def create_dict_ui(kv_dict, items, is_col=True, section=''):
                 items.append(item)
 
 def launch_ui():
-    with gr.Blocks(title="DeepFloyd IF", theme=settings['theme'], analytics_enabled=False) as demo:
+    with gr.Blocks(title="DeepFloyd IF", theme=settings["general"]["theme"], analytics_enabled=False) as demo:
 
         with gr.Accordion("Settings", open=False):
             #settings_text = gr.Textbox(label="Settings", value=get_settings_string())
@@ -384,7 +385,7 @@ def launch_ui():
         with gr.Row():
             with gr.Column():
                 btn_generate = gr.Button("Generate").style(full_width=False)
-                batch_count = gr.Slider(label="Batch Count", minimum=1, maximum=8, value=4, step=1)
+                batch_count = gr.Slider(label="Batch Count", minimum=1, maximum=8, value=1, step=1)
 
                 with gr.Row():
                     seed = gr.Number(label="Seed", value=42)
@@ -392,8 +393,13 @@ def launch_ui():
 
                 gallery = gr.Gallery(show_label=False).style(columns=[4], rows=[1], object_fit="scale-down", preview=True)
 
-                prompt.submit(generate_images, inputs=[prompt, negative_prompt, style_prompt, batch_count, seed, random_seed], outputs=[gallery, seed])
-                btn_generate.click(generate_images, inputs=[prompt, negative_prompt, style_prompt, batch_count, seed, random_seed], outputs=[gallery, seed])
+                gen_inputs = [prompt, negative_prompt, style_prompt, batch_count, seed, random_seed]
+                gen_outputs = [gallery, seed]
+
+                prompt.submit(generate_images, inputs=gen_inputs, outputs=gen_outputs)
+                negative_prompt.submit(generate_images, inputs=gen_inputs, outputs=gen_outputs)
+                style_prompt.submit(generate_images, inputs=gen_inputs, outputs=gen_outputs)
+                btn_generate.click(generate_images, inputs=gen_inputs, outputs=gen_outputs)
 
             with gr.Column():
                 btn_upscale = gr.Button("Upscale").style(full_width=False)
@@ -415,7 +421,7 @@ def launch_ui():
                 btn_stash.click(stash_selected_image, outputs=[stash])
                 btn_clear.click(clear_stash, outputs=[stash])
                 stash.select(stash_gallery_selected, outputs=[upscale_input])
-                btn_upscale_all.click(upscale_all, inputs=[prompt, seed], outputs=[upscaled])
+                btn_upscale_all.click(upscale_all, inputs=[prompt, negative_prompt, seed], outputs=[upscaled])
 
     demo.queue().launch()
 
@@ -424,13 +430,15 @@ if __name__ == "__main__":
     if not os.path.exists(os.path.join(os.path.expanduser('~'), '.cache/huggingface/token')):
         login()
 
+    load_settings()
+
     print("Loading T5Embedder...")
-    t5 = T5Embedder(device=device)
+    offload_folder = settings["general"]["offload_folder"]
+    t5 = T5Embedder(device=device, use_offload_folder=offload_folder if offload_folder != "" else None)
 
     print("Launching webui...")
     os.makedirs("images", exist_ok=True)
     os.makedirs("upscales", exist_ok=True)
-    load_settings()
     try:
         launch_ui()
     finally:
